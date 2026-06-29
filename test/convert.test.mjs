@@ -45,3 +45,41 @@ test("missing images render as placeholders instead of localhost URLs", () => {
   assert.doesNotMatch(result.articleHtml, /src="assets\/missing\.svg"/);
   assert.deepEqual(result.warnings, ["Image not found: assets/missing.svg"]);
 });
+
+test("code blocks use WeChat editor safe line structure", () => {
+  const result = renderArticle({
+    markdown: [
+      "# Code",
+      "",
+      "```python",
+      "def hello():",
+      "    return \"world\"",
+      "```",
+    ].join("\n"),
+    input: "/tmp/code.md",
+    outDir: fs.mkdtempSync(path.join(os.tmpdir(), "wepub-test-")),
+  });
+
+  assert.match(result.articleHtml, /data-wepub-code="true"/);
+  assert.doesNotMatch(result.articleHtml, /<pre\b/);
+  assert.doesNotMatch(result.articleHtml, /<code\b/);
+  assert.match(result.articleHtml, /def hello\(\):/);
+  assert.match(result.articleHtml, /&nbsp;&nbsp;&nbsp;&nbsp;return &quot;world&quot;/);
+});
+
+test("nested lists render without marked inline parser errors", () => {
+  const result = renderArticle({
+    markdown: [
+      "# List",
+      "",
+      "- 外层",
+      "  - 内层",
+      "- 另一个外层",
+    ].join("\n"),
+    input: "/tmp/list.md",
+    outDir: fs.mkdtempSync(path.join(os.tmpdir(), "wepub-test-")),
+  });
+
+  assert.match(result.articleHtml, /外层/);
+  assert.match(result.articleHtml, /内层/);
+});

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createWebServer } from "../src/web-server.mjs";
+import { createMemoryCredentialStore } from "../src/wechat/credentials.mjs";
 
 async function withServer(t) {
   const server = createWebServer();
@@ -97,4 +98,98 @@ test("rejects browser requests from non-local origins", async (t) => {
     headers: { Origin: "https://example.com" },
   });
   assert.equal(response.status, 403);
+});
+
+test("saves config and tests the WeChat connection without exposing credentials", async (t) => {
+  const credentialStore = createMemoryCredentialStore();
+  let tokenRequested = false;
+  const server = createWebServer({
+    credentialStore,
+    clientFactory: () => ({
+      async getAccessToken() {
+        tokenRequested = true;
+        return "access-token";
+      },
+    }),
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const saveResponse = await fetch(`${base}/api/wechat/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      appid: "wx1234567890abcdef",
+      secret: "a-secret-value-long-enough",
+    }),
+  });
+  const saved = await saveResponse.json();
+  assert.deepEqual(saved, { configured: true, appidSuffix: "abcdef" });
+  assert.equal(JSON.stringify(saved).includes("secret"), false);
+
+  const testResponse = await fetch(`${base}/api/wechat/test`, { method: "POST" });
+  assert.equal(testResponse.status, 200);
+  assert.equal(tokenRequested, true);
+});
+
+test("uploads article images and verifies a newly created draft", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wepub-cover-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const coverPath = path.join(dir, "cover.png");
+  fs.writeFileSync(coverPath, "cover-source");
+  let draftedArticle;
+  const client = {
+    async uploadContentImage() {
+      return "http://mmbiz.qpic.cn/wepub-content";
+    },
+    async uploadCover() {
+      return "thumb-media-id";
+    },
+    async addDraft(article) {
+      draftedArticle = article;
+      return "draft-media-id";
+    },
+    async getDraft() {
+      return { news_item: [{ title: draftedArticle.title, content: draftedArticle.content }] };
+    },
+  };
+  const server = createWebServer({
+    pickCover: async () => coverPath,
+    credentialStore: createMemoryCredentialStore({
+      appid: "wx1234567890abcdef",
+      secret: "a-secret-value-long-enough",
+    }),
+    clientFactory: () => client,
+    prepareCover: async () => ({
+      buffer: Buffer.from("small-jpeg"),
+      filename: "cover.jpg",
+    }),
+    prepareContentImage: async (image) => image,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const coverResponse = await fetch(`${base}/api/open-cover`, { method: "POST" });
+  const cover = await coverResponse.json();
+  const imageSrc = `data:image/png;base64,${Buffer.from("article-image").toString("base64")}`;
+  const publishResponse = await fetch(`${base}/api/wechat/publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      articleHtml: `<section><img src="${imageSrc}"></section>`,
+      title: "Verified draft",
+      coverToken: cover.token,
+    }),
+  });
+  const published = await publishResponse.json();
+
+  assert.equal(publishResponse.status, 200);
+  assert.equal(published.mediaId, "draft-media-id");
+  assert.equal(published.verified, true);
+  assert.equal(published.uploadedImages, 1);
+  assert.equal(draftedArticle.article_type, "news");
+  assert.equal(draftedArticle.thumb_media_id, "thumb-media-id");
+  assert.match(draftedArticle.content, /mmbiz\.qpic\.cn/);
 });

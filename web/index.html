@@ -15,8 +15,10 @@
     </a>
     <div class="privacy"><span class="privacy-dot"></span>内容仅在本机处理</div>
     <div class="top-actions">
+      <button class="button button-icon" id="settingsButton" title="微信公众号设置">⚙</button>
       <button class="button button-secondary" id="downloadButton" disabled>下载 HTML</button>
       <button class="button button-primary" id="copyButton" disabled>复制到公众号</button>
+      <button class="button button-wechat" id="publishButton" disabled>同步到草稿箱</button>
     </div>
   </header>
 
@@ -84,6 +86,81 @@
       </div>
     </section>
   </main>
+
+  <dialog class="modal" id="settingsDialog">
+    <form class="modal-card" method="dialog" id="settingsForm">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow">WECHAT</p>
+          <h2>微信公众号连接</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog aria-label="关闭">×</button>
+      </div>
+      <p class="modal-intro">凭据只发送到本机服务，并保存在 macOS Keychain。wepub 不会将 AppSecret 写入项目文件。</p>
+      <label class="field">
+        <span>AppID</span>
+        <input id="wechatAppid" name="appid" autocomplete="off" placeholder="wx…" required>
+      </label>
+      <label class="field">
+        <span>AppSecret</span>
+        <input id="wechatSecret" name="secret" type="password" autocomplete="new-password" placeholder="仅在更新配置时填写" required>
+      </label>
+      <div class="connection-state" id="connectionState">尚未配置</div>
+      <div class="modal-actions">
+        <button class="button button-secondary" type="button" id="testConnectionButton">测试已有配置</button>
+        <button class="button button-primary" type="submit">保存到 Keychain</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="publishDialog">
+    <form class="modal-card modal-card-wide" method="dialog" id="publishForm">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow">DRAFT</p>
+          <h2>同步到公众号草稿箱</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog aria-label="关闭">×</button>
+      </div>
+      <div class="publish-grid">
+        <div class="publish-fields">
+          <label class="field">
+            <span>标题</span>
+            <input id="draftTitle" maxlength="64" required>
+          </label>
+          <label class="field">
+            <span>作者</span>
+            <input id="draftAuthor" maxlength="16" placeholder="可选">
+          </label>
+          <label class="field">
+            <span>摘要</span>
+            <textarea id="draftDigest" maxlength="54" rows="3" placeholder="可选，留空由微信自动提取"></textarea>
+          </label>
+          <label class="field">
+            <span>原文链接</span>
+            <input id="draftSourceUrl" type="url" placeholder="可选">
+          </label>
+          <label class="check-field">
+            <input id="draftComments" type="checkbox">
+            <span>允许留言</span>
+          </label>
+        </div>
+        <div class="cover-field">
+          <span class="field-title">封面</span>
+          <button class="cover-picker" id="coverPicker" type="button">
+            <img id="coverPreview" alt="封面预览" hidden>
+            <span id="coverPlaceholder">选择 JPG 或 PNG<br><small>将自动转换为微信缩略图</small></span>
+          </button>
+          <span class="cover-name" id="coverName"></span>
+        </div>
+      </div>
+      <div class="publish-status" id="publishStatus"></div>
+      <div class="modal-actions">
+        <button class="button button-secondary" type="button" data-close-dialog>取消</button>
+        <button class="button button-wechat" type="submit" id="confirmPublishButton">确认同步到草稿箱</button>
+      </div>
+    </form>
+  </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="/app.js"></script>

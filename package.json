@@ -1,7 +1,7 @@
 {
   "name": "wepub",
   "version": "0.1.0",
-  "description": "Convert Markdown and Jupyter Notebook files into WeChat-ready article HTML.",
+  "description": "Local Web workspace for publishing Markdown and Jupyter Notebooks to WeChat Official Account drafts.",
   "homepage": "https://github.com/yauld/wepub#readme",
   "repository": {
     "type": "git",
@@ -34,8 +34,11 @@
     "publisher",
     "mp",
     "wechat-official-account",
+    "wechat-draft",
+    "official-account",
     "rich-text",
-    "markdown-to-html"
+    "markdown-to-html",
+    "local-first"
   ],
   "license": "MIT",
   "dependencies": {

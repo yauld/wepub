@@ -27,4 +27,13 @@ body:
   - type: textarea
     attributes:
       label: 最小复现内容与截图
-      description: 请先移除文档中的隐私数据。
+      description: 请先移除文档中的隐私数据。若是公众号兼容问题，请同时提供 wepub 预览和公众号编辑器结果截图。
+  - type: dropdown
+    attributes:
+      label: 出现问题的位置
+      options:
+        - Web 工作台预览
+        - 复制到公众号
+        - 同步到公众号草稿箱
+        - CLI 转换
+        - 其他
