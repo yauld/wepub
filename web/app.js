@@ -16,6 +16,27 @@ const elements = {
   articlePreview: document.querySelector("#articlePreview"),
   copyButton: document.querySelector("#copyButton"),
   downloadButton: document.querySelector("#downloadButton"),
+  publishButton: document.querySelector("#publishButton"),
+  settingsButton: document.querySelector("#settingsButton"),
+  settingsDialog: document.querySelector("#settingsDialog"),
+  settingsForm: document.querySelector("#settingsForm"),
+  wechatAppid: document.querySelector("#wechatAppid"),
+  wechatSecret: document.querySelector("#wechatSecret"),
+  connectionState: document.querySelector("#connectionState"),
+  testConnectionButton: document.querySelector("#testConnectionButton"),
+  publishDialog: document.querySelector("#publishDialog"),
+  publishForm: document.querySelector("#publishForm"),
+  draftTitle: document.querySelector("#draftTitle"),
+  draftAuthor: document.querySelector("#draftAuthor"),
+  draftDigest: document.querySelector("#draftDigest"),
+  draftSourceUrl: document.querySelector("#draftSourceUrl"),
+  draftComments: document.querySelector("#draftComments"),
+  coverPicker: document.querySelector("#coverPicker"),
+  coverPreview: document.querySelector("#coverPreview"),
+  coverPlaceholder: document.querySelector("#coverPlaceholder"),
+  coverName: document.querySelector("#coverName"),
+  publishStatus: document.querySelector("#publishStatus"),
+  confirmPublishButton: document.querySelector("#confirmPublishButton"),
   toast: document.querySelector("#toast"),
 };
 
@@ -29,6 +50,8 @@ const state = {
   notebook: false,
   warnings: [],
   sourceToken: null,
+  coverToken: null,
+  wechatConfigured: false,
 };
 
 function toast(message) {
@@ -141,9 +164,7 @@ async function openLocalDocument() {
   elements.openLocalButton.disabled = true;
   elements.openLocalButton.textContent = "等待选择…";
   try {
-    const response = await fetch("/api/open-local", { method: "POST" });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "无法打开文档");
+    const result = await fetchJson("/api/open-local", { method: "POST" });
 
     state.filename = result.filename;
     state.sourceToken = result.token;
@@ -175,7 +196,7 @@ async function render() {
   const id = ++state.renderId;
   elements.saveState.textContent = "正在转换…";
   try {
-    const response = await fetch("/api/render", {
+    const result = await fetchJson("/api/render", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -185,8 +206,6 @@ async function render() {
         sourceToken: state.sourceToken,
       }),
     });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "转换失败");
     if (id !== state.renderId) return;
 
     const missingPaths = (result.warnings || [])
@@ -214,6 +233,7 @@ async function render() {
     elements.articleCanvas.hidden = false;
     elements.copyButton.disabled = false;
     elements.downloadButton.disabled = false;
+    elements.publishButton.disabled = false;
     elements.saveState.textContent = "预览已更新";
 
     const warnings = state.warnings;
@@ -248,6 +268,7 @@ function resetPreview() {
   elements.articleCanvas.hidden = true;
   elements.copyButton.disabled = true;
   elements.downloadButton.disabled = true;
+  elements.publishButton.disabled = true;
   elements.messages.hidden = true;
 }
 
@@ -309,6 +330,169 @@ function downloadHtml() {
   toast("HTML 已下载");
 }
 
+function setStatus(element, message, type = "") {
+  element.textContent = message;
+  element.className = element === elements.connectionState ? "connection-state" : "publish-status";
+  if (type) element.classList.add(type);
+}
+
+async function fetchJson(url, options) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  let result = {};
+  if (text) {
+    try {
+      result = JSON.parse(text);
+    } catch {
+      throw new Error(`${response.status} ${response.statusText || ""}：${text.slice(0, 120)}`);
+    }
+  }
+  if (!response.ok) throw new Error(result.error || `${response.status} ${response.statusText || "请求失败"}`);
+  return result;
+}
+
+async function loadWechatStatus() {
+  try {
+    const result = await fetchJson("/api/wechat/config/status");
+    state.wechatConfigured = Boolean(result.configured);
+    setStatus(
+      elements.connectionState,
+      result.configured ? `已配置 · AppID 尾号 ${result.appidSuffix}` : "尚未配置",
+      result.configured ? "success" : "",
+    );
+  } catch {
+    setStatus(elements.connectionState, "无法读取本地配置", "error");
+  }
+}
+
+async function saveWechatConfig(event) {
+  event.preventDefault();
+  const submit = elements.settingsForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  setStatus(elements.connectionState, "正在保存到 Keychain…");
+  try {
+    const result = await fetchJson("/api/wechat/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appid: elements.wechatAppid.value,
+        secret: elements.wechatSecret.value,
+      }),
+    });
+    elements.wechatSecret.value = "";
+    state.wechatConfigured = true;
+    setStatus(elements.connectionState, `已安全保存 · AppID 尾号 ${result.appidSuffix}`, "success");
+    toast("微信公众号凭据已保存到 Keychain");
+  } catch (error) {
+    setStatus(elements.connectionState, error.message, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function testWechatConnection() {
+  elements.testConnectionButton.disabled = true;
+  setStatus(elements.connectionState, "正在连接微信官方 API…");
+  try {
+    await fetchJson("/api/wechat/test", { method: "POST" });
+    setStatus(elements.connectionState, "连接成功，稳定版 access_token 已获取", "success");
+  } catch (error) {
+    setStatus(elements.connectionState, error.message, "error");
+  } finally {
+    elements.testConnectionButton.disabled = false;
+  }
+}
+
+function openPublishDialog() {
+  if (!state.wechatConfigured) {
+    elements.settingsDialog.showModal();
+    toast("请先配置微信公众号连接");
+    return;
+  }
+  elements.draftTitle.value = elements.previewTitle.textContent || "";
+  if (!elements.draftDigest.value) {
+    elements.draftDigest.value = elements.articlePreview.innerText
+      .replace(elements.draftTitle.value, "")
+      .trim()
+      .slice(0, 100);
+  }
+  setStatus(elements.publishStatus, "");
+  elements.confirmPublishButton.disabled = false;
+  elements.confirmPublishButton.textContent = "确认同步到草稿箱";
+  elements.publishDialog.showModal();
+}
+
+function resetCoverSelection() {
+  state.coverToken = null;
+  elements.coverPreview.removeAttribute("src");
+  elements.coverPreview.hidden = true;
+  elements.coverPlaceholder.hidden = false;
+  elements.coverName.textContent = "";
+}
+
+async function chooseCover() {
+  elements.coverPicker.disabled = true;
+  try {
+    const result = await fetchJson("/api/open-cover", { method: "POST" });
+    state.coverToken = result.token;
+    elements.coverPreview.src = result.preview;
+    elements.coverPreview.hidden = false;
+    elements.coverPlaceholder.hidden = true;
+    elements.coverName.textContent = result.filename;
+  } catch (error) {
+    if (error.message !== "已取消选择文件") setStatus(elements.publishStatus, error.message, "error");
+  } finally {
+    elements.coverPicker.disabled = false;
+  }
+}
+
+async function publishDraft(event) {
+  event.preventDefault();
+  if (!state.coverToken) {
+    setStatus(elements.publishStatus, "请选择封面图片", "error");
+    return;
+  }
+  elements.confirmPublishButton.disabled = true;
+  elements.confirmPublishButton.textContent = "正在同步…";
+  setStatus(elements.publishStatus, "正在上传正文图片和封面，请勿关闭页面…");
+  try {
+    const result = await fetchJson("/api/wechat/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        articleHtml: state.articleHtml,
+        title: elements.draftTitle.value,
+        author: elements.draftAuthor.value,
+        digest: elements.draftDigest.value,
+        contentSourceUrl: elements.draftSourceUrl.value,
+        needOpenComment: elements.draftComments.checked,
+        coverToken: state.coverToken,
+      }),
+    });
+    state.coverToken = null;
+    setStatus(
+      elements.publishStatus,
+      `草稿创建并校验成功 · 上传正文图片 ${result.uploadedImages} 张`,
+      "success",
+    );
+    elements.confirmPublishButton.textContent = "已同步到草稿箱";
+    elements.saveState.textContent = "已同步到公众号草稿箱";
+    toast("草稿已进入微信公众号后台");
+    setTimeout(() => {
+      elements.publishDialog.close();
+      elements.confirmPublishButton.disabled = false;
+      elements.confirmPublishButton.textContent = "确认同步到草稿箱";
+      resetCoverSelection();
+      setStatus(elements.publishStatus, "");
+    }, 1200);
+    return;
+  } catch (error) {
+    setStatus(elements.publishStatus, error.message, "error");
+  }
+  elements.confirmPublishButton.disabled = false;
+  elements.confirmPublishButton.textContent = "确认同步到草稿箱";
+}
+
 elements.openLocalButton.addEventListener("click", openLocalDocument);
 elements.editor.addEventListener("input", () => {
   if (!elements.fileMeta.hidden && state.notebook) {
@@ -319,6 +503,15 @@ elements.editor.addEventListener("input", () => {
 elements.clearButton.addEventListener("click", clearAll);
 elements.copyButton.addEventListener("click", copyArticle);
 elements.downloadButton.addEventListener("click", downloadHtml);
+elements.settingsButton.addEventListener("click", () => elements.settingsDialog.showModal());
+elements.settingsForm.addEventListener("submit", saveWechatConfig);
+elements.testConnectionButton.addEventListener("click", testWechatConnection);
+elements.publishButton.addEventListener("click", openPublishDialog);
+elements.coverPicker.addEventListener("click", chooseCover);
+elements.publishForm.addEventListener("submit", publishDraft);
+document.querySelectorAll("[data-close-dialog]").forEach((button) => {
+  button.addEventListener("click", () => button.closest("dialog").close());
+});
 
 for (const eventName of ["dragenter", "dragover"]) {
   elements.dropzone.addEventListener(eventName, (event) => {
@@ -344,3 +537,5 @@ document.querySelectorAll(".switch-button").forEach((button) => {
     elements.articleCanvas.classList.toggle("mobile", button.dataset.width === "mobile");
   });
 });
+
+loadWechatStatus();

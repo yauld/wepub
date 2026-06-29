@@ -6,10 +6,14 @@ import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { renderSource } from "./convert.mjs";
+import { WechatClient, uploadArticleImages } from "./wechat/client.mjs";
+import { createKeychainCredentialStore } from "./wechat/credentials.mjs";
+import { prepareWechatContentImage, prepareWechatCover } from "./wechat/cover.mjs";
 
 const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../web");
 const MAX_BODY_BYTES = 60 * 1024 * 1024;
 const localSources = new Map();
+const localCovers = new Map();
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -104,6 +108,23 @@ function chooseLocalFile() {
   });
 }
 
+function chooseCoverFile() {
+  if (process.platform !== "darwin") throw new Error("当前系统暂不支持原生封面选择");
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/osascript", [
+      "-e",
+      'POSIX path of (choose file with prompt "选择微信公众号封面（JPG 或 PNG）" of type {"public.jpeg", "public.png"})',
+    ], (error, stdout) => {
+      if (error) {
+        const cancelled = error.message?.includes("(-128)");
+        reject(new Error(cancelled ? "已取消选择文件" : "无法打开封面选择器"));
+        return;
+      }
+      resolve(stdout.trim());
+    });
+  });
+}
+
 function validateSourceFile(input) {
   const extension = path.extname(input).toLowerCase();
   if (![".md", ".markdown", ".ipynb"].includes(extension)) {
@@ -125,6 +146,22 @@ async function openLocalRequest(response, pickFile) {
     token,
     filename: path.basename(input),
     content: fs.readFileSync(input, "utf8"),
+  });
+}
+
+async function openCoverRequest(response, pickCover) {
+  const input = await pickCover();
+  const extension = path.extname(input).toLowerCase();
+  if (![".jpg", ".jpeg", ".png"].includes(extension)) throw new Error("封面请选择 JPG 或 PNG 图片");
+  if (!fs.existsSync(input) || !fs.statSync(input).isFile()) throw new Error("封面图片不存在");
+  const token = crypto.randomUUID();
+  localCovers.set(token, input);
+  if (localCovers.size > 100) localCovers.delete(localCovers.keys().next().value);
+  const mime = extension === ".png" ? "image/png" : "image/jpeg";
+  sendJson(response, 200, {
+    token,
+    filename: path.basename(input),
+    preview: `data:${mime};base64,${fs.readFileSync(input).toString("base64")}`,
   });
 }
 
@@ -169,26 +206,109 @@ function serveStatic(request, response) {
   send(response, 200, fs.readFileSync(file), contentType);
 }
 
-export function createWebServer({ pickFile = chooseLocalFile } = {}) {
+export function createWebServer({
+  pickFile = chooseLocalFile,
+  pickCover = chooseCoverFile,
+  credentialStore = createKeychainCredentialStore(),
+  clientFactory = (credentials) => new WechatClient({ credentials }),
+  prepareCover = prepareWechatCover,
+  prepareContentImage = prepareWechatContentImage,
+} = {}) {
+  let wechatClient = null;
+  const getWechatClient = async () => {
+    if (wechatClient) return wechatClient;
+    const credentials = await credentialStore.load();
+    if (!credentials) throw new Error("请先配置微信公众号 AppID 和 AppSecret");
+    wechatClient = clientFactory(credentials);
+    return wechatClient;
+  };
+
   return http.createServer(async (request, response) => {
+    const requestPath = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`).pathname;
     try {
       if (!hasTrustedOrigin(request)) {
         sendJson(response, 403, { error: "拒绝来自非本地页面的请求" });
         return;
       }
-      if (request.method === "POST" && request.url === "/api/open-local") {
+      if (request.method === "POST" && requestPath === "/api/open-local") {
         await openLocalRequest(response, pickFile);
         return;
       }
-      if (request.method === "POST" && request.url === "/api/render") {
+      if (request.method === "POST" && requestPath === "/api/open-cover") {
+        await openCoverRequest(response, pickCover);
+        return;
+      }
+      if (request.method === "POST" && requestPath === "/api/render") {
         await renderRequest(request, response);
+        return;
+      }
+      if (request.method === "GET" && requestPath === "/api/wechat/config/status") {
+        sendJson(response, 200, await credentialStore.status());
+        return;
+      }
+      if (request.method === "POST" && requestPath === "/api/wechat/config") {
+        const payload = await readJson(request);
+        await credentialStore.save({ appid: payload.appid, secret: payload.secret });
+        wechatClient = null;
+        sendJson(response, 200, await credentialStore.status());
+        return;
+      }
+      if (request.method === "POST" && requestPath === "/api/wechat/test") {
+        const client = await getWechatClient();
+        await client.getAccessToken({ forceRefresh: true });
+        sendJson(response, 200, { connected: true });
+        return;
+      }
+      if (request.method === "POST" && requestPath === "/api/wechat/publish") {
+        const payload = await readJson(request);
+        const title = String(payload.title || "").trim();
+        if (!title) throw new Error("请填写文章标题");
+        if (!payload.articleHtml) throw new Error("文章内容为空");
+        if (!payload.coverToken || !localCovers.has(payload.coverToken)) {
+          throw new Error("请选择封面图片");
+        }
+
+        const client = await getWechatClient();
+        const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "wepub-publish-"));
+        try {
+          const uploaded = await uploadArticleImages(payload.articleHtml, client, {
+            prepareImage: (image) => prepareContentImage(image, workDir),
+          });
+          const cover = await prepareCover(localCovers.get(payload.coverToken), workDir);
+          const thumbMediaId = await client.uploadCover(cover);
+          const mediaId = await client.addDraft({
+            article_type: "news",
+            title,
+            author: String(payload.author || "").trim(),
+            digest: String(payload.digest || "").trim(),
+            content: uploaded.html,
+            content_source_url: String(payload.contentSourceUrl || "").trim(),
+            thumb_media_id: thumbMediaId,
+            need_open_comment: payload.needOpenComment ? 1 : 0,
+            only_fans_can_comment: payload.onlyFansCanComment ? 1 : 0,
+          });
+          const draft = await client.getDraft(mediaId);
+          const firstArticle = draft.news_item?.[0];
+          if (!firstArticle || firstArticle.title !== title) {
+            throw new Error("草稿已创建，但微信返回的校验结果与当前文章不一致");
+          }
+          localCovers.delete(payload.coverToken);
+          sendJson(response, 200, {
+            mediaId,
+            title: firstArticle.title,
+            uploadedImages: uploaded.uploadedCount,
+            verified: true,
+          });
+        } finally {
+          fs.rmSync(workDir, { recursive: true, force: true });
+        }
         return;
       }
       if (request.method === "GET" || request.method === "HEAD") {
         serveStatic(request, response);
         return;
       }
-      send(response, 405, "Method not allowed", "text/plain; charset=utf-8");
+      sendJson(response, 405, { error: "当前接口不支持这个请求方法，请刷新页面或重启 wepub 服务后再试" });
     } catch (error) {
       console.error(error);
       sendJson(response, 500, { error: error.message || "转换失败" });

@@ -40,6 +40,27 @@ function decodeHtmlEntities(value = "") {
     .replaceAll("&amp;", "&");
 }
 
+function escapeCodeLine(value = "") {
+  return escapeHtml(value)
+    .replaceAll("\t", "    ")
+    .replace(/ {2,}/g, (spaces) => "&nbsp;".repeat(spaces.length))
+    .replace(/^ /, "&nbsp;");
+}
+
+function renderCodeBlock(code = "", language = "") {
+  const lang = String(language || "").trim();
+  const normalized = String(code || "").replace(/\n$/, "");
+  const lines = normalized.split("\n");
+  const label = lang
+    ? `<p style="margin:0 0 10px;padding:0;font-size:12px;line-height:1.35;color:#93c5fd;font-family:Menlo,Consolas,Monaco,'Courier New',monospace;">${escapeHtml(lang)}</p>`
+    : "";
+  const body = lines.map((line) => {
+    const content = line ? escapeCodeLine(line) : "&nbsp;";
+    return `<p style="margin:0;padding:0;min-height:20px;font-size:13px;line-height:1.65;color:${theme.codeText};font-family:Menlo,Consolas,Monaco,'Courier New',monospace;word-break:break-all;overflow-wrap:anywhere;">${content}</p>`;
+  }).join("");
+  return `<section data-wepub-code="true" style="margin:18px 0;padding:16px;border-radius:8px;background:${theme.codeBg};overflow:hidden;">${label}${body}</section>`;
+}
+
 function stripFrontmatter(markdown) {
   return markdown.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, "");
 }
@@ -238,8 +259,7 @@ function makeRenderer(sourceDir, outDir, warnings) {
   };
 
   renderer.code = function (token) {
-    const lang = token.lang ? `<span style="display:block;margin-bottom:8px;font-size:12px;line-height:1.2;color:#93c5fd;">${escapeHtml(token.lang)}</span>` : "";
-    return `<pre style="margin:18px 0;padding:16px;overflow-x:auto;border-radius:8px;background:${theme.codeBg};line-height:1.65;white-space:pre;"><code style="font-family:Menlo,Consolas,Monaco,monospace;font-size:13px;color:${theme.codeText};">${lang}${escapeHtml(token.text || "")}</code></pre>`;
+    return renderCodeBlock(token.text || "", token.lang || "");
   };
 
   renderer.blockquote = function (token) {
@@ -254,7 +274,10 @@ function makeRenderer(sourceDir, outDir, warnings) {
   };
 
   renderer.listitem = function (token) {
-    return `<li style="margin:6px 0;padding-left:2px;font-size:15px;line-height:1.9;color:${theme.text};word-break:normal;overflow-wrap:break-word;">${inline(this, token)}</li>`;
+    const body = token.tokens?.some((item) => item.type === "list")
+      ? this.parser.parse(token.tokens || [])
+      : inline(this, token);
+    return `<li style="margin:6px 0;padding-left:2px;font-size:15px;line-height:1.9;color:${theme.text};word-break:normal;overflow-wrap:break-word;">${body}</li>`;
   };
 
   renderer.image = function (token) {
