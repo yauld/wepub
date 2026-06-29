@@ -9,7 +9,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yauld/wepub/actions/workflows/ci.yml"><img src="https://github.com/yauld/wepub/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/yauld/wepub/blob/main/LICENSE"><img src="https://img.shields.io/github/license/yauld/wepub" alt="MIT License"></a>
   <a href="https://github.com/yauld/wepub/stargazers"><img src="https://img.shields.io/github/stars/yauld/wepub?style=social" alt="GitHub stars"></a>
 </p>
