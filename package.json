@@ -2,13 +2,29 @@
   "name": "wepub",
   "version": "0.1.0",
   "description": "Convert Markdown and Jupyter Notebook files into WeChat-ready article HTML.",
+  "homepage": "https://github.com/yauld/wepub#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yauld/wepub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yauld/wepub/issues"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "web/"
+  ],
   "type": "module",
   "bin": {
-    "wepub": "./bin/wepub.mjs"
+    "wepub": "./bin/wepub.mjs",
+    "wepub-web": "./bin/wepub-web.mjs"
   },
   "scripts": {
     "start": "node ./bin/wepub.mjs",
-    "demo": "node ./bin/wepub.mjs ./examples/demo.md --out ./dist/demo"
+    "web": "node ./bin/wepub-web.mjs",
+    "demo": "node ./bin/wepub.mjs ./examples/demo.md --out ./dist/demo",
+    "test": "node --test"
   },
   "keywords": [
     "wechat",
@@ -16,7 +32,10 @@
     "jupyter",
     "notebook",
     "publisher",
-    "mp"
+    "mp",
+    "wechat-official-account",
+    "rich-text",
+    "markdown-to-html"
   ],
   "license": "MIT",
   "dependencies": {

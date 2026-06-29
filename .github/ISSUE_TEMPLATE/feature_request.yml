@@ -1,0 +1,21 @@
+name: Feature request
+description: 提议新能力或体验改进
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    attributes:
+      label: 使用场景
+      description: 你在什么发布流程中遇到了什么问题？
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 期望方案
+      description: 你希望 wepub 如何解决它？
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 其他方案
+      description: 你现在如何绕过这个问题？

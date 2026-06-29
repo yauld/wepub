@@ -1,0 +1,30 @@
+name: Bug report
+description: 报告转换、预览或公众号兼容问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    attributes:
+      label: 问题描述
+      description: 实际发生了什么？你期望看到什么？
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开……
+        2. 选择……
+        3. 点击……
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: 环境
+      placeholder: macOS 15, Node.js 22, Chrome 136
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 最小复现内容与截图
+      description: 请先移除文档中的隐私数据。
