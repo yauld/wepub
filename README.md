@@ -10,6 +10,7 @@ Convert local Markdown and Jupyter Notebook files into WeChat-ready article HTML
 - Jupyter Notebook markdown/code/output rendering
 - Local images converted to data URI for stable preview
 - Jupyter attachment images supported
+- SVG images are rendered to PNG through local Chrome when no sibling PNG exists
 - Inline styles for headings, paragraphs, lists, quotes, code blocks, tables, and images
 - Local `preview.html` with a rich-text copy button
 

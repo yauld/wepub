@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { marked, Renderer } = require("marked");
@@ -52,7 +54,48 @@ function fileToDataUri(filePath) {
   return `data:${mime};base64,${data}`;
 }
 
-function normalizeImageHref(href, sourceDir, warnings) {
+function chromeExecutable() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function svgToPngDataUri(svgPath, outDir, warnings) {
+  const assetDir = path.join(outDir, "assets");
+  fs.mkdirSync(assetDir, { recursive: true });
+
+  const hash = crypto.createHash("sha256").update(svgPath).digest("hex").slice(0, 12);
+  const pngPath = path.join(assetDir, `svg-${hash}.png`);
+
+  if (!fs.existsSync(pngPath)) {
+    const chrome = chromeExecutable();
+    if (!chrome) {
+      warnings.push(`SVG kept as data URI because Chrome was not found: ${svgPath}`);
+      return fileToDataUri(svgPath);
+    }
+
+    execFileSync(chrome, [
+      "--headless",
+      "--disable-gpu",
+      "--hide-scrollbars",
+      "--screenshot=" + pngPath,
+      "--window-size=1400,900",
+      pathToFileURL(svgPath).href,
+    ], { stdio: "ignore" });
+  }
+
+  return fileToDataUri(pngPath);
+}
+
+function normalizeImageHref(href, sourceDir, outDir, warnings) {
   if (!href || /^(https?:|data:|file:)/i.test(href)) return href;
 
   const cleanHref = decodeURIComponent(href).replace(/^<|>$/g, "");
@@ -66,7 +109,7 @@ function normalizeImageHref(href, sourceDir, warnings) {
   if (absolute.toLowerCase().endsWith(".svg")) {
     const png = absolute.replace(/\.svg$/i, ".png");
     if (fs.existsSync(png)) return fileToDataUri(png);
-    warnings.push(`SVG kept as data URI because no PNG sibling exists: ${cleanHref}`);
+    return svgToPngDataUri(absolute, outDir, warnings);
   }
 
   return fileToDataUri(absolute);
@@ -136,7 +179,7 @@ function markdownFromInput(input, outDir) {
   return fs.readFileSync(input, "utf8");
 }
 
-function makeRenderer(sourceDir, warnings) {
+function makeRenderer(sourceDir, outDir, warnings) {
   const renderer = new Renderer();
   const inline = (ctx, token) => ctx.parser.parseInline(token.tokens || []);
 
@@ -176,7 +219,7 @@ function makeRenderer(sourceDir, warnings) {
   };
 
   renderer.blockquote = function (token) {
-    const body = marked.parse(token.text || "", { renderer: makeNestedRenderer(sourceDir, warnings) });
+    const body = marked.parse(token.text || "", { renderer: makeNestedRenderer(sourceDir, outDir, warnings) });
     return `<blockquote style="margin:18px 0;padding:12px 16px;border-left:4px solid ${theme.border};background:${theme.quoteBg};color:${theme.muted};">${body}</blockquote>`;
   };
 
@@ -191,7 +234,7 @@ function makeRenderer(sourceDir, warnings) {
   };
 
   renderer.image = function (token) {
-    const src = normalizeImageHref(token.href, sourceDir, warnings);
+    const src = normalizeImageHref(token.href, sourceDir, outDir, warnings);
     const alt = escapeHtml(token.text || "");
     return `<figure style="margin:22px 0;text-align:center;"><img src="${src}" alt="${alt}" style="display:block;width:100%;max-width:100%;height:auto;margin:0 auto;border-radius:6px;"><figcaption style="margin-top:8px;font-size:12px;line-height:1.5;color:${theme.muted};">${alt}</figcaption></figure>`;
   };
@@ -214,18 +257,18 @@ function makeRenderer(sourceDir, warnings) {
   return renderer;
 }
 
-function makeNestedRenderer(sourceDir, warnings) {
-  const nested = makeRenderer(sourceDir, warnings);
+function makeNestedRenderer(sourceDir, outDir, warnings) {
+  const nested = makeRenderer(sourceDir, outDir, warnings);
   nested.paragraph = function (token) {
     return `<p style="margin:6px 0;font-size:15px;line-height:1.85;color:${theme.muted};">${this.parser.parseInline(token.tokens || [])}</p>`;
   };
   return nested;
 }
 
-function renderWechatHtml(markdown, input, warnings) {
+function renderWechatHtml(markdown, input, outDir, warnings) {
   const clean = stripFrontmatter(markdown);
   const sourceDir = path.dirname(input);
-  const renderer = makeRenderer(sourceDir, warnings);
+  const renderer = makeRenderer(sourceDir, outDir, warnings);
   const body = marked(clean, {
     renderer,
     gfm: true,
@@ -293,7 +336,7 @@ export async function convertArticle({ input, outDir }) {
   const markdown = markdownFromInput(input, outDir);
   const title = titleFromMarkdown(stripFrontmatter(markdown), input);
   const warnings = [];
-  const articleHtml = renderWechatHtml(markdown, input, warnings);
+  const articleHtml = renderWechatHtml(markdown, input, outDir, warnings);
   const previewHtml = fullPreviewPage(title, articleHtml);
   const checksum = crypto.createHash("sha256").update(articleHtml).digest("hex").slice(0, 12);
 
