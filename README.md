@@ -13,7 +13,7 @@
   <a href="https://github.com/yauld/wepub/stargazers"><img src="https://img.shields.io/github/stars/yauld/wepub?style=social" alt="GitHub stars"></a>
 </p>
 
-![wepub 本地 Web 工作台](docs/images/wepub-workspace.png)
+![wepub 本地 Web 工作台](docs/images/wepub-agentic-workspace.png)
 
 ## 为什么做 wepub？
 
@@ -48,17 +48,15 @@ wepub 尤其适合：
 - 下载独立 HTML 预览文件
 - 保留 CLI，方便脚本和自动化工作流调用
 
-## 截图建议
+## 产品截图
 
-当前 README 首屏展示的是主工作台截图。为了让新访客更快理解 wepub 的价值，后续最值得补充这三张产品截图：
+wepub 的核心路径是：本地文档预览 → 确认草稿信息 → 进入公众号草稿箱。
 
-| 截图 | 建议文件名 | 作用 |
+| 本地预览 | 同步到草稿箱 | 微信草稿箱结果 |
 | --- | --- | --- |
-| 主工作台：左侧文档、右侧公众号预览、顶部操作按钮 | `docs/images/wepub-workspace.png` | 一眼说明 wepub 是本地 Web 发布工作台 |
-| 同步草稿箱弹窗：标题、摘要、封面、确认同步 | `docs/images/wepub-draft-sync.png` | 证明不仅能复制，还能走微信草稿 API |
-| 微信公众号草稿箱 / 编辑器成功结果 | `docs/images/wepub-wechat-draft.png` | 证明最终落地到公众号后台且代码块不塌 |
+| ![wepub 本地预览](docs/images/wepub-agentic-workspace.png) | ![同步到公众号草稿箱](docs/images/wepub-draft-sync.png) | ![微信公众号草稿箱结果](docs/images/wepub-wechat-draft.png) |
 
-截图前请遮住 AppID、AppSecret、access_token、真实公网 IP 和不希望公开的公众号信息。
+更多截图准备建议见 [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)。
 
 ## 快速开始
 
