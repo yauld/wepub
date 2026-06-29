@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="将 Markdown 和 Jupyter Notebook 转换成微信公众号文章">
+  <title>wepub · 公众号文章工作台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="wepub 首页">
+      <span class="brand-mark">w</span>
+      <span>wepub</span>
+    </a>
+    <div class="privacy"><span class="privacy-dot"></span>内容仅在本机处理</div>
+    <div class="top-actions">
+      <button class="button button-secondary" id="downloadButton" disabled>下载 HTML</button>
+      <button class="button button-primary" id="copyButton" disabled>复制到公众号</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="editor-pane">
+      <div class="pane-heading">
+        <div>
+          <p class="eyebrow">SOURCE</p>
+          <h1>文章内容</h1>
+        </div>
+        <button class="file-button" id="openLocalButton" type="button">打开本地文档</button>
+      </div>
+
+      <div class="dropzone" id="dropzone">
+        <div class="drop-icon">↥</div>
+        <div>
+          <strong>选择一个 Markdown 或 Notebook</strong>
+          <span>wepub 会自动查找并处理文档关联的本地图片</span>
+        </div>
+      </div>
+
+      <div class="file-meta" id="fileMeta" hidden>
+        <span class="file-type" id="fileType">MD</span>
+        <div class="file-detail">
+          <strong id="fileName"></strong>
+          <span id="assetSummary"></span>
+        </div>
+        <button class="icon-button" id="clearButton" title="清空">×</button>
+      </div>
+
+      <label class="editor-label" for="sourceEditor">
+        <span id="editorLabel">Markdown</span>
+        <span id="saveState">等待导入</span>
+      </label>
+      <textarea id="sourceEditor" spellcheck="false" placeholder="# 从这里开始写作
+
+把 Markdown 文件拖到上方，或者直接在这里输入内容。"></textarea>
+
+      <div class="messages" id="messages" hidden></div>
+    </section>
+
+    <section class="preview-pane">
+      <div class="pane-heading preview-heading">
+        <div>
+          <p class="eyebrow">PREVIEW</p>
+          <h2 id="previewTitle">公众号预览</h2>
+        </div>
+        <div class="view-switch" aria-label="预览宽度">
+          <button class="switch-button active" data-width="desktop" title="桌面宽度">桌面</button>
+          <button class="switch-button" data-width="mobile" title="手机宽度">手机</button>
+        </div>
+      </div>
+
+      <div class="preview-stage" id="previewStage">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-paper">
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <h3>文章会在这里成形</h3>
+          <p>导入文件或开始输入，预览会自动更新</p>
+        </div>
+        <div class="article-canvas" id="articleCanvas" hidden>
+          <div id="articlePreview"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

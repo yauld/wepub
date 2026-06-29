@@ -1,0 +1,210 @@
+import http from "node:http";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { renderSource } from "./convert.mjs";
+
+const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../web");
+const MAX_BODY_BYTES = 60 * 1024 * 1024;
+const localSources = new Map();
+const MIME_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+};
+
+function send(response, status, body, contentType = "application/json; charset=utf-8") {
+  response.writeHead(status, {
+    "Content-Type": contentType,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(body);
+}
+
+function sendJson(response, status, data) {
+  send(response, status, JSON.stringify(data), "application/json; charset=utf-8");
+}
+
+function hasTrustedOrigin(request) {
+  const origin = request.headers.origin;
+  if (!origin) return true;
+  try {
+    const originUrl = new URL(origin);
+    return ["127.0.0.1", "localhost", "[::1]"].includes(originUrl.hostname)
+      && originUrl.host === request.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+async function readJson(request) {
+  const chunks = [];
+  let size = 0;
+
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) throw new Error("上传内容超过 60 MB 限制");
+    chunks.push(chunk);
+  }
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new Error("请求内容不是有效的 JSON");
+  }
+}
+
+function safeRelativePath(value, fallback) {
+  const normalized = String(value || fallback)
+    .replaceAll("\\", "/")
+    .replace(/^\/+/, "");
+  const parts = normalized.split("/").filter((part) => part && part !== "." && part !== "..");
+  return parts.join("/") || fallback;
+}
+
+function writeWorkspace(workDir, payload) {
+  const sourceName = safeRelativePath(payload.filename, "article.md");
+  const sourcePath = path.join(workDir, sourceName);
+  fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+  fs.writeFileSync(sourcePath, String(payload.content || ""), "utf8");
+
+  for (const asset of payload.assets || []) {
+    if (!asset?.path || !asset?.data) continue;
+    const assetPath = path.join(workDir, safeRelativePath(asset.path, crypto.randomUUID()));
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.writeFileSync(assetPath, Buffer.from(asset.data, "base64"));
+  }
+
+  return sourcePath;
+}
+
+function chooseLocalFile() {
+  if (process.platform !== "darwin") {
+    throw new Error("当前系统暂不支持原生文件选择，请拖入包含资源的整个文件夹");
+  }
+
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/osascript", [
+      "-e",
+      'POSIX path of (choose file with prompt "选择 Markdown 或 Jupyter Notebook 文档")',
+    ], (error, stdout) => {
+      if (error) {
+        const cancelled = error.message?.includes("(-128)");
+        reject(new Error(cancelled ? "已取消选择文件" : "无法打开本地文件选择器"));
+        return;
+      }
+      resolve(stdout.trim());
+    });
+  });
+}
+
+function validateSourceFile(input) {
+  const extension = path.extname(input).toLowerCase();
+  if (![".md", ".markdown", ".ipynb"].includes(extension)) {
+    throw new Error("仅支持 .md、.markdown 和 .ipynb 文件");
+  }
+  if (!fs.existsSync(input) || !fs.statSync(input).isFile()) {
+    throw new Error("选择的文档不存在或无法读取");
+  }
+}
+
+async function openLocalRequest(response, pickFile) {
+  const input = await pickFile();
+  validateSourceFile(input);
+  const token = crypto.randomUUID();
+  localSources.set(token, input);
+  if (localSources.size > 100) localSources.delete(localSources.keys().next().value);
+
+  sendJson(response, 200, {
+    token,
+    filename: path.basename(input),
+    content: fs.readFileSync(input, "utf8"),
+  });
+}
+
+async function renderRequest(request, response) {
+  const payload = await readJson(request);
+  if (!payload.filename || typeof payload.content !== "string") {
+    return sendJson(response, 400, { error: "请选择 Markdown 或 Notebook 文件" });
+  }
+
+  const extension = path.extname(payload.filename).toLowerCase();
+  if (![".md", ".markdown", ".ipynb"].includes(extension)) {
+    return sendJson(response, 400, { error: "仅支持 .md、.markdown 和 .ipynb 文件" });
+  }
+
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "wepub-web-"));
+  try {
+    const localInput = payload.sourceToken ? localSources.get(payload.sourceToken) : null;
+    const input = localInput || writeWorkspace(workDir, payload);
+    const outDir = path.join(workDir, ".output");
+    const result = renderSource({ content: payload.content, input, outDir });
+    sendJson(response, 200, {
+      title: result.title,
+      warnings: result.warnings,
+      articleHtml: result.articleHtml,
+      previewHtml: result.previewHtml,
+    });
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  }
+}
+
+function serveStatic(request, response) {
+  const url = new URL(request.url, "http://localhost");
+  const requested = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+  const file = path.resolve(WEB_ROOT, requested);
+
+  if (!file.startsWith(`${WEB_ROOT}${path.sep}`) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+    return send(response, 404, "Not found", "text/plain; charset=utf-8");
+  }
+
+  const contentType = MIME_TYPES[path.extname(file)] || "application/octet-stream";
+  send(response, 200, fs.readFileSync(file), contentType);
+}
+
+export function createWebServer({ pickFile = chooseLocalFile } = {}) {
+  return http.createServer(async (request, response) => {
+    try {
+      if (!hasTrustedOrigin(request)) {
+        sendJson(response, 403, { error: "拒绝来自非本地页面的请求" });
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/open-local") {
+        await openLocalRequest(response, pickFile);
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/render") {
+        await renderRequest(request, response);
+        return;
+      }
+      if (request.method === "GET" || request.method === "HEAD") {
+        serveStatic(request, response);
+        return;
+      }
+      send(response, 405, "Method not allowed", "text/plain; charset=utf-8");
+    } catch (error) {
+      console.error(error);
+      sendJson(response, 500, { error: error.message || "转换失败" });
+    }
+  });
+}
+
+export function startWebServer({
+  port = Number(process.env.PORT) || 4173,
+  host = process.env.HOST || "127.0.0.1",
+} = {}) {
+  const server = createWebServer();
+  server.listen(port, host, () => {
+    const address = server.address();
+    const actualPort = typeof address === "object" ? address.port : port;
+    console.log(`wepub Web: http://${host}:${actualPort}`);
+  });
+  return server;
+}

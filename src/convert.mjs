@@ -30,6 +30,16 @@ function escapeHtml(value = "") {
     .replaceAll('"', "&quot;");
 }
 
+function decodeHtmlEntities(value = "") {
+  return String(value)
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+}
+
 function stripFrontmatter(markdown) {
   return markdown.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, "");
 }
@@ -103,7 +113,7 @@ function normalizeImageHref(href, sourceDir, outDir, warnings) {
 
   if (!fs.existsSync(absolute)) {
     warnings.push(`Image not found: ${cleanHref}`);
-    return href;
+    return "";
   }
 
   if (absolute.toLowerCase().endsWith(".svg")) {
@@ -115,8 +125,8 @@ function normalizeImageHref(href, sourceDir, outDir, warnings) {
   return fileToDataUri(absolute);
 }
 
-function buildNotebookMarkdown(input, outDir) {
-  const nb = JSON.parse(fs.readFileSync(input, "utf8"));
+function buildNotebookMarkdownContent(content, input, outDir) {
+  const nb = JSON.parse(content);
   const parts = [];
   const assetDir = path.join(outDir, "assets");
   fs.mkdirSync(assetDir, { recursive: true });
@@ -173,10 +183,21 @@ function buildNotebookMarkdown(input, outDir) {
   return parts.filter(Boolean).join("\n\n");
 }
 
+function buildNotebookMarkdown(input, outDir) {
+  return buildNotebookMarkdownContent(fs.readFileSync(input, "utf8"), input, outDir);
+}
+
 function markdownFromInput(input, outDir) {
   if (!fs.existsSync(input)) throw new Error(`Input file does not exist: ${input}`);
   if (input.toLowerCase().endsWith(".ipynb")) return buildNotebookMarkdown(input, outDir);
   return fs.readFileSync(input, "utf8");
+}
+
+function markdownFromContent(content, input, outDir) {
+  if (input.toLowerCase().endsWith(".ipynb")) {
+    return buildNotebookMarkdownContent(content, input, outDir);
+  }
+  return content;
 }
 
 function makeRenderer(sourceDir, outDir, warnings) {
@@ -198,6 +219,9 @@ function makeRenderer(sourceDir, outDir, warnings) {
   };
 
   renderer.paragraph = function (token) {
+    if (token.tokens?.length === 1 && token.tokens[0].type === "image") {
+      return inline(this, token);
+    }
     return `<p style="margin:14px 0;font-size:15px;line-height:1.95;color:${theme.text};letter-spacing:0;text-align:left;">${inline(this, token)}</p>`;
   };
 
@@ -210,7 +234,7 @@ function makeRenderer(sourceDir, outDir, warnings) {
   };
 
   renderer.codespan = function (token) {
-    return `<code style="margin:0 2px;padding:2px 5px;border-radius:4px;background:${theme.accentSoft};font-family:Menlo,Consolas,Monaco,monospace;font-size:13px;color:#1d4ed8;">${escapeHtml(token.text || "")}</code>`;
+    return escapeHtml(decodeHtmlEntities(token.text || ""));
   };
 
   renderer.code = function (token) {
@@ -230,12 +254,16 @@ function makeRenderer(sourceDir, outDir, warnings) {
   };
 
   renderer.listitem = function (token) {
-    return `<li style="margin:6px 0;padding-left:2px;font-size:15px;line-height:1.9;color:${theme.text};">${inline(this, token)}</li>`;
+    return `<li style="margin:6px 0;padding-left:2px;font-size:15px;line-height:1.9;color:${theme.text};word-break:normal;overflow-wrap:break-word;">${inline(this, token)}</li>`;
   };
 
   renderer.image = function (token) {
     const src = normalizeImageHref(token.href, sourceDir, outDir, warnings);
     const alt = escapeHtml(token.text || "");
+    if (!src) {
+      const missing = escapeHtml(decodeURIComponent(token.href || ""));
+      return `<figure data-wepub-missing-image="${missing}" style="margin:22px 0;padding:22px 16px;border:1px dashed ${theme.border};border-radius:6px;background:${theme.quoteBg};text-align:center;color:${theme.muted};"><span style="display:block;font-size:13px;line-height:1.6;">图片缺失：${missing}</span>${alt ? `<figcaption style="margin-top:6px;font-size:12px;line-height:1.5;">${alt}</figcaption>` : ""}</figure>`;
+    }
     return `<figure style="margin:22px 0;text-align:center;"><img src="${src}" alt="${alt}" style="display:block;width:100%;max-width:100%;height:auto;margin:0 auto;border-radius:6px;"><figcaption style="margin-top:8px;font-size:12px;line-height:1.5;color:${theme.muted};">${alt}</figcaption></figure>`;
   };
 
@@ -280,7 +308,7 @@ function renderWechatHtml(markdown, input, outDir, warnings) {
   return `<section data-wepub="article" style="max-width:${ARTICLE_WIDTH};margin:0 auto;padding:0 4px;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;color:${theme.text};font-size:15px;line-height:1.9;letter-spacing:0;">${body}</section>`;
 }
 
-function fullPreviewPage(title, articleHtml) {
+export function fullPreviewPage(title, articleHtml) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -306,15 +334,29 @@ function fullPreviewPage(title, articleHtml) {
   <script>
     const button = document.getElementById('copy');
     button.addEventListener('click', async () => {
-      const article = document.getElementById('article').innerHTML;
-      const text = document.getElementById('article').innerText;
+      const articleElement = document.getElementById('article');
+      const article = articleElement.innerHTML;
+      const text = articleElement.innerText;
       try {
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            'text/html': new Blob([article], { type: 'text/html' }),
-            'text/plain': new Blob([text], { type: 'text/plain' })
-          })
-        ]);
+        if (articleElement.querySelector('[data-wepub-missing-image]')) {
+          button.textContent = '存在缺失图片，请先补充资源';
+          return;
+        }
+        const range = document.createRange();
+        range.selectNodeContents(articleElement);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const copied = document.execCommand('copy');
+        selection.removeAllRanges();
+        if (!copied) {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'text/html': new Blob([article], { type: 'text/html' }),
+              'text/plain': new Blob([text], { type: 'text/plain' })
+            })
+          ]);
+        }
         button.textContent = '已复制';
       } catch (error) {
         button.textContent = '复制失败，请手动选择正文复制';
@@ -334,10 +376,8 @@ export async function convertArticle({ input, outDir }) {
   fs.mkdirSync(outDir, { recursive: true });
 
   const markdown = markdownFromInput(input, outDir);
-  const title = titleFromMarkdown(stripFrontmatter(markdown), input);
-  const warnings = [];
-  const articleHtml = renderWechatHtml(markdown, input, outDir, warnings);
-  const previewHtml = fullPreviewPage(title, articleHtml);
+  const result = renderArticle({ markdown, input, outDir });
+  const { title, warnings, articleHtml, previewHtml } = result;
   const checksum = crypto.createHash("sha256").update(articleHtml).digest("hex").slice(0, 12);
 
   const articlePath = path.join(outDir, "article.html");
@@ -367,4 +407,25 @@ export async function convertArticle({ input, outDir }) {
       meta: metaPath,
     },
   };
+}
+
+export function renderArticle({ markdown, input = "article.md", outDir = process.cwd() }) {
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const title = titleFromMarkdown(stripFrontmatter(markdown), input);
+  const warnings = [];
+  const articleHtml = renderWechatHtml(markdown, input, outDir, warnings);
+  const previewHtml = fullPreviewPage(title, articleHtml);
+
+  return {
+    title,
+    warnings,
+    articleHtml,
+    previewHtml,
+  };
+}
+
+export function renderSource({ content, input = "article.md", outDir = process.cwd() }) {
+  const markdown = markdownFromContent(content, input, outDir);
+  return renderArticle({ markdown, input, outDir });
 }
