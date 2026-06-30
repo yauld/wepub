@@ -40,6 +40,15 @@ function decodeHtmlEntities(value = "") {
     .replaceAll("&amp;", "&");
 }
 
+function plainInlineText(tokens = []) {
+  return tokens.map((token) => {
+    if (typeof token.raw === "string" && !token.tokens && !token.text) return token.raw;
+    if (typeof token.text === "string" && !token.tokens) return token.text;
+    if (token.tokens) return plainInlineText(token.tokens);
+    return token.text || "";
+  }).join("");
+}
+
 function escapeCodeLine(value = "") {
   return escapeHtml(value)
     .replaceAll("\t", "    ")
@@ -292,7 +301,8 @@ function makeRenderer(sourceDir, outDir, warnings) {
 
   renderer.link = function (token) {
     const href = escapeHtml(token.href || "");
-    return `<a href="${href}" style="color:${theme.accent};text-decoration:none;border-bottom:1px solid ${theme.accentSoft};">${inline(this, token)}</a>`;
+    const textValue = escapeHtml(plainInlineText(token.tokens || []));
+    return `<a href="${href}" target="_blank" data-linktype="2" linktype="text" textvalue="${textValue}" style="color:#576b95;text-decoration:none;">${inline(this, token)}</a>`;
   };
 
   renderer.hr = function () {

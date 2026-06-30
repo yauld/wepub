@@ -18,6 +18,12 @@ const elements = {
   downloadButton: document.querySelector("#downloadButton"),
   publishButton: document.querySelector("#publishButton"),
   settingsButton: document.querySelector("#settingsButton"),
+  fileDialog: document.querySelector("#fileDialog"),
+  fileBrowserForm: document.querySelector("#fileBrowserForm"),
+  filePathInput: document.querySelector("#filePathInput"),
+  fileHomeButton: document.querySelector("#fileHomeButton"),
+  fileBrowserList: document.querySelector("#fileBrowserList"),
+  fileBrowserStatus: document.querySelector("#fileBrowserStatus"),
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
   wechatAppid: document.querySelector("#wechatAppid"),
@@ -52,6 +58,7 @@ const state = {
   sourceToken: null,
   coverToken: null,
   wechatConfigured: false,
+  fileBrowserHome: "",
 };
 
 function toast(message) {
@@ -161,28 +168,88 @@ async function loadFiles(fileList) {
 }
 
 async function openLocalDocument() {
-  elements.openLocalButton.disabled = true;
-  elements.openLocalButton.textContent = "等待选择…";
-  try {
-    const result = await fetchJson("/api/open-local", { method: "POST" });
+  elements.fileDialog.showModal();
+  await loadFileBrowser(elements.filePathInput.value || undefined);
+}
 
-    state.filename = result.filename;
-    state.sourceToken = result.token;
-    state.assets = [];
-    state.notebook = /\.ipynb$/i.test(result.filename);
-    elements.editor.value = result.content;
-    elements.fileMeta.hidden = false;
-    elements.fileType.textContent = state.notebook ? "IPYNB" : "MD";
-    elements.fileName.textContent = result.filename;
-    elements.assetSummary.textContent = "关联图片将从文档所在目录自动解析";
-    elements.editorLabel.textContent = state.notebook ? "Notebook JSON" : "Markdown";
-    scheduleRender(0);
+async function loadFileBrowser(dirPath) {
+  elements.fileBrowserStatus.textContent = "正在读取目录…";
+  elements.fileBrowserList.replaceChildren();
+  try {
+    const query = dirPath ? `?path=${encodeURIComponent(dirPath)}` : "";
+    const result = await fetchJson(`/api/files${query}`);
+    state.fileBrowserHome = result.home;
+    elements.filePathInput.value = result.current;
+    renderFileBrowser(result);
+    elements.fileBrowserStatus.textContent = result.entries.length
+      ? "请选择 Markdown 或 Notebook 文件"
+      : "这个目录下没有可打开的文档";
   } catch (error) {
-    if (error.message !== "已取消选择文件") toast(error.message);
-  } finally {
-    elements.openLocalButton.disabled = false;
-    elements.openLocalButton.textContent = "打开本地文档";
+    elements.fileBrowserStatus.textContent = error.message;
   }
+}
+
+function renderFileBrowser(result) {
+  const rows = [];
+  if (result.parent) {
+    rows.push(fileBrowserRow({
+      name: "..",
+      path: result.parent,
+      type: "directory",
+    }));
+  }
+  for (const entry of result.entries) rows.push(fileBrowserRow(entry));
+  elements.fileBrowserList.replaceChildren(...rows);
+}
+
+function fileBrowserRow(entry) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `file-row ${entry.type}`;
+  button.dataset.path = entry.path;
+  button.dataset.type = entry.type;
+
+  const icon = document.createElement("span");
+  icon.className = "file-row-icon";
+  icon.textContent = entry.type === "directory" ? "DIR" : "MD";
+
+  const name = document.createElement("span");
+  name.className = "file-row-name";
+  name.textContent = entry.name;
+
+  button.append(icon, name);
+  button.addEventListener("click", async () => {
+    if (entry.type === "directory") {
+      await loadFileBrowser(entry.path);
+      return;
+    }
+    await openLocalDocumentByPath(entry.path);
+  });
+  return button;
+}
+
+async function openLocalDocumentByPath(filePath) {
+  const result = await fetchJson("/api/open-path", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: filePath }),
+  });
+  applyLocalDocument(result);
+  elements.fileDialog.close();
+}
+
+function applyLocalDocument(result) {
+  state.filename = result.filename;
+  state.sourceToken = result.token;
+  state.assets = [];
+  state.notebook = /\.ipynb$/i.test(result.filename);
+  elements.editor.value = result.content;
+  elements.fileMeta.hidden = false;
+  elements.fileType.textContent = state.notebook ? "IPYNB" : "MD";
+  elements.fileName.textContent = result.filename;
+  elements.assetSummary.textContent = "关联图片将从文档所在目录自动解析";
+  elements.editorLabel.textContent = state.notebook ? "Notebook JSON" : "Markdown";
+  scheduleRender(0);
 }
 
 async function render() {
@@ -494,6 +561,13 @@ async function publishDraft(event) {
 }
 
 elements.openLocalButton.addEventListener("click", openLocalDocument);
+elements.fileBrowserForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await loadFileBrowser(elements.filePathInput.value);
+});
+elements.fileHomeButton.addEventListener("click", async () => {
+  await loadFileBrowser(state.fileBrowserHome || undefined);
+});
 elements.editor.addEventListener("input", () => {
   if (!elements.fileMeta.hidden && state.notebook) {
     elements.saveState.textContent = "Notebook 已修改";
