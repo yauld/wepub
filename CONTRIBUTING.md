@@ -18,8 +18,16 @@
 git clone https://github.com/yauld/wepub.git
 cd wepub
 npm install
-npm run web
+npm run dev
 ```
+
+`npm run dev` 会启动本地 Web 工作台，前端静态页面和后端 API 共用同一个 Node 服务。默认地址是 <http://127.0.0.1:4173>；如果端口被占用，脚本会自动选择后续可用端口。需要固定端口时可以运行：
+
+```bash
+npm run dev -- --port=4174
+```
+
+「打开本地文档」使用 wepub 内置的本地文件浏览器，不依赖系统文件选择器；选中文档后，关联图片仍会从文档所在目录自动解析。
 
 运行测试：
 

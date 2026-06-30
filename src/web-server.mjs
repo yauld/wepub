@@ -135,8 +135,40 @@ function validateSourceFile(input) {
   }
 }
 
+function listLocalFiles(dirPath) {
+  const requested = dirPath ? String(dirPath) : os.homedir();
+  const expanded = requested === "~" ? os.homedir() : requested.replace(/^~(?=\/|\\)/, os.homedir());
+  const current = path.resolve(expanded);
+  if (!fs.existsSync(current) || !fs.statSync(current).isDirectory()) {
+    throw new Error("目录不存在或无法读取");
+  }
+
+  const entries = fs.readdirSync(current, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() || /\.(md|markdown|ipynb)$/i.test(entry.name))
+    .map((entry) => ({
+      name: entry.name,
+      path: path.join(current, entry.name),
+      type: entry.isDirectory() ? "directory" : "file",
+    }))
+    .sort((left, right) => {
+      if (left.type !== right.type) return left.type === "directory" ? -1 : 1;
+      return left.name.localeCompare(right.name, "zh-Hans-CN", { numeric: true });
+    });
+
+  return {
+    current,
+    parent: path.dirname(current) === current ? null : path.dirname(current),
+    home: os.homedir(),
+    entries,
+  };
+}
+
 async function openLocalRequest(response, pickFile) {
   const input = await pickFile();
+  return openLocalPath(response, input);
+}
+
+async function openLocalPath(response, input) {
   validateSourceFile(input);
   const token = crypto.randomUUID();
   localSources.set(token, input);
@@ -147,6 +179,18 @@ async function openLocalRequest(response, pickFile) {
     filename: path.basename(input),
     content: fs.readFileSync(input, "utf8"),
   });
+}
+
+async function openPathRequest(request, response) {
+  const payload = await readJson(request);
+  const input = String(payload.path || "").trim();
+  if (!path.isAbsolute(input)) throw new Error("请输入文档的绝对路径");
+  await openLocalPath(response, input);
+}
+
+function filesRequest(request, response) {
+  const url = new URL(request.url, "http://localhost");
+  sendJson(response, 200, listLocalFiles(url.searchParams.get("path")));
 }
 
 async function openCoverRequest(response, pickCover) {
@@ -234,6 +278,14 @@ export function createWebServer({
         await openLocalRequest(response, pickFile);
         return;
       }
+      if (request.method === "POST" && requestPath === "/api/open-path") {
+        await openPathRequest(request, response);
+        return;
+      }
+      if (request.method === "GET" && requestPath === "/api/files") {
+        filesRequest(request, response);
+        return;
+      }
       if (request.method === "POST" && requestPath === "/api/open-cover") {
         await openCoverRequest(response, pickCover);
         return;
@@ -274,6 +326,7 @@ export function createWebServer({
           const uploaded = await uploadArticleImages(payload.articleHtml, client, {
             prepareImage: (image) => prepareContentImage(image, workDir),
           });
+          const contentSourceUrl = String(payload.contentSourceUrl || "").trim();
           const cover = await prepareCover(localCovers.get(payload.coverToken), workDir);
           const thumbMediaId = await client.uploadCover(cover);
           const mediaId = await client.addDraft({
@@ -282,7 +335,7 @@ export function createWebServer({
             author: String(payload.author || "").trim(),
             digest: String(payload.digest || "").trim(),
             content: uploaded.html,
-            content_source_url: String(payload.contentSourceUrl || "").trim(),
+            content_source_url: contentSourceUrl,
             thumb_media_id: thumbMediaId,
             need_open_comment: payload.needOpenComment ? 1 : 0,
             only_fans_can_comment: payload.onlyFansCanComment ? 1 : 0,
@@ -297,6 +350,7 @@ export function createWebServer({
             mediaId,
             title: firstArticle.title,
             uploadedImages: uploaded.uploadedCount,
+            contentSourceUrl,
             verified: true,
           });
         } finally {

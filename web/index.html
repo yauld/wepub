@@ -162,6 +162,25 @@
     </form>
   </dialog>
 
+  <dialog class="modal file-dialog" id="fileDialog">
+    <form class="modal-card" method="dialog" id="fileBrowserForm">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow">LOCAL</p>
+          <h2>选择本地文档</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog aria-label="关闭">×</button>
+      </div>
+      <div class="file-browser-bar">
+        <input id="filePathInput" aria-label="当前目录">
+        <button class="button button-secondary" id="fileHomeButton" type="button">主目录</button>
+        <button class="button button-primary" type="submit">前往</button>
+      </div>
+      <div class="file-browser-list" id="fileBrowserList"></div>
+      <div class="file-browser-status" id="fileBrowserStatus"></div>
+    </form>
+  </dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="/app.js"></script>
 </body>

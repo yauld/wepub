@@ -22,6 +22,7 @@
   },
   "scripts": {
     "start": "node ./bin/wepub.mjs",
+    "dev": "sh ./scripts/dev.sh",
     "web": "node ./bin/wepub-web.mjs",
     "demo": "node ./bin/wepub.mjs ./examples/demo.md --out ./dist/demo",
     "test": "node --test"

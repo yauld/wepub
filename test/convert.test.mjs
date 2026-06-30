@@ -67,6 +67,26 @@ test("code blocks use WeChat editor safe line structure", () => {
   assert.match(result.articleHtml, /&nbsp;&nbsp;&nbsp;&nbsp;return &quot;world&quot;/);
 });
 
+test("links render with WeChat editor compatible attributes", () => {
+  const result = renderArticle({
+    markdown: [
+      "# Links",
+      "",
+      "- [完整文章：MCP Transport：stdio 与 Streamable HTTP 如何传递消息](https://github.com/yauld/ai-forge/blob/main/labs/mcp/foundations/05%20%7C%20MCP%20Transport%EF%BC%9Astdio%20%E4%B8%8E%20Streamable%20HTTP%20%E5%A6%82%E4%BD%95%E4%BC%A0%E9%80%92%E6%B6%88%E6%81%AF.md)",
+      "- [实验代码目录：labs/mcp/foundations/examples](https://github.com/yauld/ai-forge/tree/main/labs/mcp/foundations/examples)",
+    ].join("\n"),
+    input: "/tmp/links.md",
+    outDir: fs.mkdtempSync(path.join(os.tmpdir(), "wepub-test-")),
+  });
+
+  assert.match(result.articleHtml, /<a href="https:\/\/github\.com\/yauld\/ai-forge\/blob\/main\//);
+  assert.match(result.articleHtml, /target="_blank"/);
+  assert.match(result.articleHtml, /data-linktype="2"/);
+  assert.match(result.articleHtml, /linktype="text"/);
+  assert.match(result.articleHtml, /textvalue="完整文章：MCP Transport：stdio 与 Streamable HTTP 如何传递消息"/);
+  assert.doesNotMatch(result.articleHtml, /\]\(https:\/\/github\.com/);
+});
+
 test("nested lists render without marked inline parser errors", () => {
   const result = renderArticle({
     markdown: [
