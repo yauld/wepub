@@ -67,6 +67,27 @@ test("code blocks use WeChat editor safe line structure", () => {
   assert.match(result.articleHtml, /&nbsp;&nbsp;&nbsp;&nbsp;return &quot;world&quot;/);
 });
 
+test("mermaid fences render as diagram containers", () => {
+  const result = renderArticle({
+    markdown: [
+      "# Diagram",
+      "",
+      "```mermaid",
+      "flowchart LR",
+      "  A[Start] --> B[Done]",
+      "```",
+    ].join("\n"),
+    input: "/tmp/diagram.md",
+    outDir: fs.mkdtempSync(path.join(os.tmpdir(), "wepub-test-")),
+  });
+
+  assert.match(result.articleHtml, /data-wepub-mermaid="true"/);
+  assert.match(result.articleHtml, /class="mermaid"/);
+  assert.match(result.articleHtml, /flowchart LR/);
+  assert.doesNotMatch(result.articleHtml, /data-wepub-code="true"/);
+  assert.match(result.previewHtml, /renderMermaidDiagrams/);
+});
+
 test("links render with WeChat editor compatible attributes", () => {
   const result = renderArticle({
     markdown: [

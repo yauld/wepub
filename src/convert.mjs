@@ -70,6 +70,38 @@ function renderCodeBlock(code = "", language = "") {
   return `<section data-wepub-code="true" style="margin:18px 0;padding:16px;border-radius:8px;background:${theme.codeBg};overflow:hidden;">${label}${body}</section>`;
 }
 
+function renderMermaidBlock(code = "") {
+  const normalized = String(code || "").replace(/\n$/, "");
+  return [
+    `<section data-wepub-mermaid="true" style="margin:22px 0;padding:14px;border:1px solid ${theme.border};border-radius:8px;background:#ffffff;overflow-x:auto;text-align:center;">`,
+    `<pre class="mermaid" style="margin:0;white-space:pre-wrap;text-align:left;font-size:13px;line-height:1.6;color:${theme.muted};font-family:Menlo,Consolas,Monaco,'Courier New',monospace;">${escapeHtml(normalized)}</pre>`,
+    `<p data-wepub-mermaid-error hidden style="margin:10px 0 0;font-size:12px;line-height:1.5;color:#b45309;text-align:left;">Mermaid 图表渲染失败，已保留源码。</p>`,
+    `</section>`,
+  ].join("");
+}
+
+function normalizeCodeLanguage(language = "") {
+  return String(language || "").trim().split(/\s+/)[0].toLowerCase();
+}
+
+function mermaidRuntimePath() {
+  return require.resolve("mermaid/dist/mermaid.min.js");
+}
+
+function copyMermaidRuntime(outDir, warnings) {
+  const assetDir = path.join(outDir, "assets");
+  const dest = path.join(assetDir, "mermaid.min.js");
+
+  try {
+    fs.mkdirSync(assetDir, { recursive: true });
+    if (!fs.existsSync(dest)) fs.copyFileSync(mermaidRuntimePath(), dest);
+    return "assets/mermaid.min.js";
+  } catch (error) {
+    warnings.push(`Mermaid runtime could not be copied: ${error.message}`);
+    return "";
+  }
+}
+
 function stripFrontmatter(markdown) {
   return markdown.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, "");
 }
@@ -268,6 +300,9 @@ function makeRenderer(sourceDir, outDir, warnings) {
   };
 
   renderer.code = function (token) {
+    if (normalizeCodeLanguage(token.lang) === "mermaid") {
+      return renderMermaidBlock(token.text || "");
+    }
     return renderCodeBlock(token.text || "", token.lang || "");
   };
 
@@ -341,7 +376,7 @@ function renderWechatHtml(markdown, input, outDir, warnings) {
   return `<section data-wepub="article" style="max-width:${ARTICLE_WIDTH};margin:0 auto;padding:0 4px;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;color:${theme.text};font-size:15px;line-height:1.9;letter-spacing:0;">${body}</section>`;
 }
 
-export function fullPreviewPage(title, articleHtml) {
+export function fullPreviewPage(title, articleHtml, { mermaidScriptSrc = "" } = {}) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -365,9 +400,123 @@ export function fullPreviewPage(title, articleHtml) {
     <article id="article">${articleHtml}</article>
   </main>
   <script>
+    const mermaidScriptUrl = ${JSON.stringify(mermaidScriptSrc)};
+    let mermaidScriptPromise = null;
+
+    async function loadMermaid() {
+      if (!mermaidScriptPromise) {
+        mermaidScriptPromise = new Promise((resolve, reject) => {
+          if (window.mermaid) {
+            resolve(window.mermaid);
+            return;
+          }
+          if (!mermaidScriptUrl) {
+            reject(new Error('Mermaid runtime is unavailable'));
+            return;
+          }
+          const script = document.createElement('script');
+          script.src = mermaidScriptUrl;
+          script.async = true;
+          script.onload = () => resolve(window.mermaid);
+          script.onerror = () => reject(new Error('Mermaid runtime failed to load'));
+          document.head.append(script);
+        }).then((mermaid) => {
+          if (!mermaid) throw new Error('Mermaid runtime failed to load');
+          mermaid.initialize({
+            startOnLoad: false,
+            securityLevel: 'loose',
+            htmlLabels: true,
+            theme: 'default'
+          });
+          return mermaid;
+        });
+      }
+      return mermaidScriptPromise;
+    }
+
+    function svgSize(svg) {
+      const widthMatch = svg.match(/\\bwidth="([\\d.]+)(?:px)?"/i);
+      const heightMatch = svg.match(/\\bheight="([\\d.]+)(?:px)?"/i);
+      if (widthMatch && heightMatch) {
+        return {
+          width: Math.max(1, Math.ceil(Number(widthMatch[1]))),
+          height: Math.max(1, Math.ceil(Number(heightMatch[1])))
+        };
+      }
+
+      const viewBoxMatch = svg.match(/\\bviewBox="[^"]*?([\\d.]+)\\s+([\\d.]+)"/i);
+      if (viewBoxMatch) {
+        return {
+          width: Math.max(1, Math.ceil(Number(viewBoxMatch[1]))),
+          height: Math.max(1, Math.ceil(Number(viewBoxMatch[2])))
+        };
+      }
+
+      return { width: 1200, height: 720 };
+    }
+
+    async function svgToPngDataUri(svg) {
+      const image = new Image();
+      const source = svg.startsWith('<svg') ? svg : svg.replace(/^[\\s\\S]*?(<svg\\b)/i, '$1');
+      image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(source);
+      await image.decode();
+
+      const size = svgSize(source);
+      const scale = Math.min(2, Math.max(1, 1200 / size.width));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(size.width * scale);
+      canvas.height = Math.ceil(size.height * scale);
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/png');
+    }
+
+    async function renderMermaidDiagrams(root) {
+      const blocks = [...root.querySelectorAll('[data-wepub-mermaid] .mermaid')];
+      if (!blocks.length) return;
+
+      let mermaid;
+      try {
+        mermaid = await loadMermaid();
+      } catch {
+        for (const block of blocks) {
+          const error = block.closest('[data-wepub-mermaid]')?.querySelector('[data-wepub-mermaid-error]');
+          if (error) {
+            error.hidden = false;
+            error.textContent = 'Mermaid 加载失败，请检查网络后重试。';
+          }
+        }
+        return;
+      }
+
+      let sequence = 0;
+      for (const block of blocks) {
+        const section = block.closest('[data-wepub-mermaid]');
+        const source = block.textContent.trim();
+        if (!source) continue;
+        try {
+          const result = await mermaid.render('wepub-mermaid-preview-' + Date.now() + '-' + (++sequence), source);
+          const png = await svgToPngDataUri(result.svg);
+          block.outerHTML = '<img data-wepub-mermaid-image="true" src="' + png + '" alt="Mermaid diagram" style="display:block;width:100%;max-width:100%;height:auto;margin:0 auto;border-radius:6px;">';
+          const error = section?.querySelector('[data-wepub-mermaid-error]');
+          if (error) error.remove();
+        } catch (error) {
+          const message = section?.querySelector('[data-wepub-mermaid-error]');
+          if (message) {
+            message.hidden = false;
+            message.textContent = 'Mermaid 图表渲染失败：' + (error.message || '语法错误');
+          }
+        }
+      }
+    }
+
     const button = document.getElementById('copy');
+    const articleElement = document.getElementById('article');
+    renderMermaidDiagrams(articleElement);
     button.addEventListener('click', async () => {
-      const articleElement = document.getElementById('article');
+      await renderMermaidDiagrams(articleElement);
       const article = articleElement.innerHTML;
       const text = articleElement.innerText;
       try {
@@ -448,7 +597,10 @@ export function renderArticle({ markdown, input = "article.md", outDir = process
   const title = titleFromMarkdown(stripFrontmatter(markdown), input);
   const warnings = [];
   const articleHtml = renderWechatHtml(markdown, input, outDir, warnings);
-  const previewHtml = fullPreviewPage(title, articleHtml);
+  const mermaidScriptSrc = articleHtml.includes("data-wepub-mermaid")
+    ? copyMermaidRuntime(outDir, warnings)
+    : "";
+  const previewHtml = fullPreviewPage(title, articleHtml, { mermaidScriptSrc });
 
   return {
     title,
