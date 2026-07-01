@@ -61,6 +61,10 @@ const state = {
   fileBrowserHome: "",
 };
 
+const MERMAID_SCRIPT_URL = "/vendor/mermaid.min.js";
+let mermaidScriptPromise = null;
+let mermaidSequence = 0;
+
 function toast(message) {
   elements.toast.textContent = message;
   elements.toast.classList.add("show");
@@ -96,6 +100,135 @@ function readAsBase64(file) {
 
 function basename(filePath) {
   return String(filePath).replaceAll("\\", "/").split("/").pop();
+}
+
+async function loadMermaid() {
+  if (!mermaidScriptPromise) {
+    mermaidScriptPromise = new Promise((resolve, reject) => {
+      if (window.mermaid) {
+        resolve(window.mermaid);
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = MERMAID_SCRIPT_URL;
+      script.async = true;
+      script.onload = () => resolve(window.mermaid);
+      script.onerror = () => reject(new Error("Mermaid runtime failed to load"));
+      document.head.append(script);
+    }).then((mermaid) => {
+      if (!mermaid) throw new Error("Mermaid runtime failed to load");
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        htmlLabels: true,
+        theme: "default",
+      });
+      return mermaid;
+    });
+  }
+  return mermaidScriptPromise;
+}
+
+function svgSize(svg) {
+  const widthMatch = svg.match(/\bwidth="([\d.]+)(?:px)?"/i);
+  const heightMatch = svg.match(/\bheight="([\d.]+)(?:px)?"/i);
+  if (widthMatch && heightMatch) {
+    return {
+      width: Math.max(1, Math.ceil(Number(widthMatch[1]))),
+      height: Math.max(1, Math.ceil(Number(heightMatch[1]))),
+    };
+  }
+
+  const viewBoxMatch = svg.match(/\bviewBox="[^"]*?([\d.]+)\s+([\d.]+)"/i);
+  if (viewBoxMatch) {
+    return {
+      width: Math.max(1, Math.ceil(Number(viewBoxMatch[1]))),
+      height: Math.max(1, Math.ceil(Number(viewBoxMatch[2]))),
+    };
+  }
+
+  return { width: 1200, height: 720 };
+}
+
+async function svgToPngDataUri(svg) {
+  const image = new Image();
+  const source = svg.startsWith("<svg") ? svg : svg.replace(/^[\s\S]*?(<svg\b)/i, "$1");
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
+  image.src = url;
+  await image.decode();
+
+  const size = svgSize(source);
+  const scale = Math.min(2, Math.max(1, 1200 / size.width));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(size.width * scale);
+  canvas.height = Math.ceil(size.height * scale);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/png");
+}
+
+async function renderMermaidDiagrams(root = elements.articlePreview) {
+  const blocks = [...root.querySelectorAll("[data-wepub-mermaid] .mermaid")];
+  if (!blocks.length) return;
+
+  let mermaid;
+  try {
+    mermaid = await loadMermaid();
+  } catch {
+    for (const block of blocks) {
+      const error = block.closest("[data-wepub-mermaid]")?.querySelector("[data-wepub-mermaid-error]");
+      if (error) {
+        error.hidden = false;
+        error.textContent = "Mermaid 加载失败，请检查网络后重试。";
+      }
+    }
+    return;
+  }
+
+  for (const block of blocks) {
+    const section = block.closest("[data-wepub-mermaid]");
+    const source = block.textContent.trim();
+    if (!source) continue;
+
+    try {
+      const id = `wepub-mermaid-${Date.now()}-${++mermaidSequence}`;
+      const { svg } = await mermaid.render(id, source);
+      const png = await svgToPngDataUri(svg);
+      block.outerHTML = `<img data-wepub-mermaid-image="true" src="${png}" alt="Mermaid diagram" style="display:block;width:100%;max-width:100%;height:auto;margin:0 auto;border-radius:6px;">`;
+      const error = section?.querySelector("[data-wepub-mermaid-error]");
+      if (error) error.remove();
+    } catch (error) {
+      const message = section?.querySelector("[data-wepub-mermaid-error]");
+      if (message) {
+        message.hidden = false;
+        message.textContent = `Mermaid 图表渲染失败：${error.message || "语法错误"}`;
+      }
+    }
+  }
+
+  state.articleHtml = elements.articlePreview.innerHTML;
+}
+
+function previewDocumentHtml(title, articleHtml) {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { margin: 0; background: #f3f4f6; }
+    .shell { max-width: 760px; margin: 0 auto; padding: 32px 18px 56px; background: #fff; min-height: 100vh; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <article>${articleHtml}</article>
+  </main>
+</body>
+</html>`;
 }
 
 async function collectDroppedFiles(dataTransfer) {
@@ -295,6 +428,8 @@ async function render() {
     state.previewHtml = result.previewHtml;
     state.warnings = result.warnings || [];
     elements.articlePreview.innerHTML = result.articleHtml;
+    await renderMermaidDiagrams();
+    if (id !== state.renderId) return;
     elements.previewTitle.textContent = result.title || "公众号预览";
     elements.emptyState.hidden = true;
     elements.articleCanvas.hidden = false;
@@ -353,6 +488,7 @@ function clearAll() {
 
 async function copyArticle() {
   if (!state.articleHtml) return;
+  await renderMermaidDiagrams();
   const missingImages = state.warnings.filter((warning) => warning.startsWith("Image not found:"));
   if (missingImages.length) {
     elements.messages.hidden = false;
@@ -386,9 +522,11 @@ async function copyArticle() {
   }
 }
 
-function downloadHtml() {
+async function downloadHtml() {
   if (!state.previewHtml) return;
-  const blob = new Blob([state.previewHtml], { type: "text/html;charset=utf-8" });
+  await renderMermaidDiagrams();
+  const html = previewDocumentHtml(elements.previewTitle.textContent || "wepub-article", state.articleHtml);
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = `${elements.previewTitle.textContent || "wepub-article"}.html`;
@@ -523,6 +661,7 @@ async function publishDraft(event) {
   elements.confirmPublishButton.textContent = "正在同步…";
   setStatus(elements.publishStatus, "正在上传正文图片和封面，请勿关闭页面…");
   try {
+    await renderMermaidDiagrams();
     const result = await fetchJson("/api/wechat/publish", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

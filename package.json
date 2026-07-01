@@ -43,7 +43,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "marked": "^13.0.3"
+    "marked": "^13.0.3",
+    "mermaid": "^10.9.6"
   },
   "engines": {
     "node": ">=18"

@@ -5,12 +5,15 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { renderSource } from "./convert.mjs";
 import { WechatClient, uploadArticleImages } from "./wechat/client.mjs";
 import { createKeychainCredentialStore } from "./wechat/credentials.mjs";
 import { prepareWechatContentImage, prepareWechatCover } from "./wechat/cover.mjs";
 
+const require = createRequire(import.meta.url);
 const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../web");
+const MERMAID_RUNTIME = require.resolve("mermaid/dist/mermaid.min.js");
 const MAX_BODY_BYTES = 60 * 1024 * 1024;
 const localSources = new Map();
 const localCovers = new Map();
@@ -239,6 +242,10 @@ async function renderRequest(request, response) {
 
 function serveStatic(request, response) {
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/vendor/mermaid.min.js") {
+    return send(response, 200, fs.readFileSync(MERMAID_RUNTIME), "text/javascript; charset=utf-8");
+  }
+
   const requested = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
   const file = path.resolve(WEB_ROOT, requested);
 
